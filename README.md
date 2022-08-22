@@ -7,6 +7,10 @@ supports:
 - compile-time type check
 - auto promisefied API interface
 - event listen/unlisten
+- support electron sanbox
+
+todo:
+- dynamic service object creation and lifetime management
 
 
 ## Quick Start
