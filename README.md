@@ -7,10 +7,8 @@ supports:
 - compile-time type check
 - auto promisefied API interface
 - event listen/unlisten
-- support electron sanbox
-
-todo:
 - dynamic service object creation and lifetime management
+- support electron sanbox
 
 
 ## Quick Start
@@ -19,19 +17,18 @@ main process
 ```js
 let rpc = new Server();
 rpc.registerService("window", new WindowService());
-rpc.registerService("app", createRpcService(new MyShell()));
 ```
 
 renderer process
 
 ```js
 //setup client
-const { Client, createProxyService } = require("electron-rpc/renderer");
+const { Client, ProxyHelper } = require("electron-rpc/renderer");
 const EventEmitter = require("eventemitter3");
 const _client = new Client(window.ipcRenderer, new EventEmitter());
 const rpc = {
   toService: (name) => {
-    return createProxyService(_client, name);
+    return ProxyHelper.createProxyService(_client, name);
   },
 };
 
@@ -41,6 +38,10 @@ windowService.maximize();
 windowService.on("resize", (rect) => {
     console.log(rect);
 });
+
+//dynamic service
+const shell = ProxyHelper.asProxyService(await windowService.createMyShell())
+shell.openExternal('https://google.com')
 
 ```
 
