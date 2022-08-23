@@ -502,8 +502,9 @@ export class RpcClient<TContext> implements IRpcClient {
                   dynamicId: dynamicId,
                   name: name,
                 })
-                const proxyService = ProxyHelper.createProxyService(this, name, { properties })
-                if (!this.objectRegistry.get(dynamicId)) {
+                let proxyService = this.objectRegistry.get(dynamicId)
+                if (!proxyService) {
+                  proxyService = ProxyHelper.createProxyService(this, name, { properties })
                   this.objectRegistry.add(dynamicId, proxyService)
                 }
                 resolve(proxyService)
