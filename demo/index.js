@@ -1,7 +1,13 @@
-const { app, BrowserWindow, webContents } = require("electron");
+const { app, BrowserWindow, webContents, shell } = require("electron");
 const EventEmitter = require("events");
 const path = require("path");
-const { Server } = require("../main");
+const { Server, markDynamicService } = require("../main");
+
+class MyShell {
+  openExternal(url) {
+    shell.openExternal(url);
+  }
+}
 
 class WindowService {
   constructor() {
@@ -42,6 +48,9 @@ class WindowService {
         return browser === null || browser === void 0
           ? void 0
           : browser.restore();
+
+      case "createMyShell":
+        return markDynamicService(new MyShell());
     }
     throw new Error(`method not found: ${method}`);
   }
@@ -90,7 +99,7 @@ const createWindow = () => {
   });
 
   win.loadFile("index.html");
-//   win.webContents.openDevTools({ mode: "detach" });
+  win.webContents.openDevTools({ mode: "detach" });
 };
 
 let rpc = new Server();

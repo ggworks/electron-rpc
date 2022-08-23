@@ -1,11 +1,13 @@
-const { Client, createProxyService } = require("../../renderer");
+const rpcRender = require("../../renderer");
+console.log(rpcRender)
+const { Client, ProxyHelper } = require("../../renderer");
 const EventEmitter = require("eventemitter3");
 
 const _client = new Client(window.ipcRenderer, new EventEmitter());
 
 const rpc = {
   toService: (name) => {
-    return createProxyService(_client, name);
+    return ProxyHelper.createProxyService(_client, name);
   },
 };
 
@@ -15,6 +17,15 @@ const writeResult = (res) => {
 };
 
 const clickHandler = {
+
+  openLink: async () => {
+    const window = rpc.toService("window");
+    const shellObject = await window.createMyShell()
+    const shell = ProxyHelper.asProxyService(shellObject)
+    shell.openExternal('https://google.com')
+  },
+
+
   maximize: () => {
     const window = rpc.toService("window");
     window.maximize();
@@ -46,7 +57,7 @@ const clickHandler = {
   },
 };
 
-["maximize", "restore", "test"].forEach((v) => {
+["openLink", "maximize", "restore", "test"].forEach((v) => {
   const btn = document.getElementById(v);
   btn.addEventListener("click", () => {
     const handler = clickHandler[v];

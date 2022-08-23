@@ -1,3 +1,4 @@
+/// <reference lib="es2021.weakref" />
 export declare type EventCB<T> = (data?: T) => void;
 export interface IEventEmiiter {
     on<T>(event: string, cb: EventCB<T>): any;
@@ -31,12 +32,31 @@ export declare const enum RpcMessageType {
     Promise = 100,
     EventListen = 102,
     EventUnlisten = 103,
+    ObjectDeref = 110,
     PromiseSuccess = 201,
     PromiseError = 202,
     PromiseErrorObject = 203,
     EventFire = 204
 }
 export declare function createRpcService<TContext>(service: unknown): IRpcService<TContext>;
+export declare function markDynamicService<T>(data: T): T;
+export declare namespace ProxyHelper {
+    export type AnyFunction<U extends any[], V> = (...args: U) => V;
+    export type Unpacked<T> = T extends Promise<infer U> ? U : T;
+    export type PromisifiedFunction<T> = T extends AnyFunction<infer U, infer V> ? (...args: U) => Promise<Unpacked<V>> : never;
+    type WithoutEvent<T> = Omit<T, 'on' | 'off' | 'once'>;
+    type WithonlyEvent<T> = Omit<T, keyof WithoutEvent<T>>;
+    export type Promisified<T> = {
+        [K in keyof T]: T[K] extends AnyFunction<infer U, infer V> ? PromisifiedFunction<T[K]> : never;
+    };
+    export type ProxyService<T> = Promisified<WithoutEvent<T>> & WithonlyEvent<T>;
+    export function asProxyService<T>(data: T): ProxyService<T>;
+    export interface IProxyServiceOptions {
+        properties?: Map<string, unknown>;
+    }
+    export function createProxyService<T>(caller: IRpcClient, name: string, options?: IProxyServiceOptions): ProxyService<T>;
+    export {};
+}
 export declare class RpcServer<TContext> implements IRpcServer<TContext> {
     private ctx;
     private services;
@@ -44,6 +64,7 @@ export declare class RpcServer<TContext> implements IRpcServer<TContext> {
     private activeRequests;
     private eventHandlers;
     private eventRoutes;
+    private dynamicServices;
     constructor(ctx: TContext);
     protected addConnection(connection: IIpcConnection<TContext>): void;
     registerService(name: string, service: IRpcService<TContext>): void;
@@ -51,6 +72,8 @@ export declare class RpcServer<TContext> implements IRpcServer<TContext> {
     listen(ctx: TContext, service: string, event: string, cb: EventCB<any>): void;
     unlisten(ctx: TContext, service: string, event: string, cb: EventCB<any>): void;
     private onRawMessage;
+    private saveDynamicService;
+    private onDeref;
     private onPromise;
     private onEventListen;
     private onEventUnlisten;
@@ -61,6 +84,7 @@ export declare class RpcClient<TContext> implements IRpcClient {
     private _events;
     private requestId;
     private handlers;
+    private objectRegistry;
     constructor(connection: IIpcConnection<TContext>, _events: IEventEmiiter);
     call(service: string, method: string, arg?: any[]): Promise<any>;
     listen<T>(service: string, event: string, cb: EventCB<T>, once?: boolean): void;

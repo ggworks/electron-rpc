@@ -1,8 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.RpcClient = exports.RpcServer = exports.createRpcService = void 0;
+exports.RpcClient = exports.RpcServer = exports.ProxyHelper = exports.markDynamicService = exports.createRpcService = void 0;
 function isPromise(obj) {
-    return !!obj && (typeof obj === "object" || typeof obj === "function") && typeof obj.then === "function";
+    return !!obj && (typeof obj === 'object' || typeof obj === 'function') && typeof obj.then === 'function';
 }
 class RpcService {
     constructor(service) {
@@ -19,16 +19,119 @@ class RpcService {
         }
     }
     listen(_, event, cb) {
-        this.call(_, "on", [event, cb]);
+        this.call(_, 'on', [event, cb]);
     }
     unlisten(_, event, cb) {
-        this.call(_, "off", [event, cb]);
+        this.call(_, 'off', [event, cb]);
     }
 }
 function createRpcService(service) {
     return new RpcService(service);
 }
 exports.createRpcService = createRpcService;
+class DynamicServices {
+    constructor() {
+        this.nextId = 0;
+        this.services = {};
+        this.ids = new WeakMap();
+    }
+    add(data, connection) {
+        const id = this.save(data);
+        this.services[id].connections.add(connection);
+        return id;
+    }
+    deref(id, connection) {
+        const pointer = this.services[id];
+        if (pointer) {
+            pointer.connections.delete(connection);
+            if (pointer.connections.size === 0) {
+                this.ids.delete(pointer.object);
+                delete this.services[id];
+            }
+        }
+    }
+    save(data) {
+        let id = this.ids.get(data);
+        if (!id) {
+            id = ++this.nextId;
+            this.services[id] = { object: data, connections: new Set() };
+        }
+        return id;
+    }
+}
+function markDynamicService(data) {
+    ;
+    data.__rpc_dyn__ = true;
+    return data;
+}
+exports.markDynamicService = markDynamicService;
+class ObjectRegistry {
+    constructor(cb) {
+        this.objectCache = new Map();
+        this.finalizationRegistry = new FinalizationRegistry((id) => {
+            const ref = this.objectCache.get(id);
+            if (ref !== undefined && ref.deref() === undefined) {
+                this.objectCache.delete(id);
+                cb(id);
+            }
+        });
+    }
+    add(id, object) {
+        const wr = new WeakRef(object);
+        this.objectCache.set(id, wr);
+        this.finalizationRegistry.register(object, id);
+    }
+    get(id) {
+        const ref = this.objectCache.get(id);
+        if (ref !== undefined) {
+            const deref = ref.deref();
+            if (deref !== undefined)
+                return deref;
+        }
+    }
+}
+var ProxyHelper;
+(function (ProxyHelper) {
+    function asProxyService(data) {
+        return data;
+    }
+    ProxyHelper.asProxyService = asProxyService;
+    function createProxyService(caller, name, options) {
+        return new Proxy({}, {
+            get(target, propKey) {
+                var _a;
+                if (typeof propKey === 'string') {
+                    if ((_a = options === null || options === void 0 ? void 0 : options.properties) === null || _a === void 0 ? void 0 : _a.has(propKey)) {
+                        return options.properties.get(propKey);
+                    }
+                    //prevent resolve as thenable
+                    if (propKey === 'then') {
+                        return undefined;
+                    }
+                    if (propKey === 'on') {
+                        return (event, cb) => {
+                            return caller.listen(name, event, cb);
+                        };
+                    }
+                    if (propKey === 'once') {
+                        return (event, cb) => {
+                            return caller.listen(name, event, cb, true);
+                        };
+                    }
+                    if (propKey === 'off') {
+                        return (event, cb) => {
+                            return caller.unlisten(name, event, cb);
+                        };
+                    }
+                    return (...args) => {
+                        return caller.call(name, propKey, args);
+                    };
+                }
+            },
+        });
+    }
+    ProxyHelper.createProxyService = createProxyService;
+})(ProxyHelper = exports.ProxyHelper || (exports.ProxyHelper = {}));
 class RpcServer {
     constructor(ctx) {
         this.ctx = ctx;
@@ -37,6 +140,7 @@ class RpcServer {
         this.activeRequests = new Map();
         this.eventHandlers = new Map();
         this.eventRoutes = new Map();
+        this.dynamicServices = new DynamicServices();
     }
     addConnection(connection) {
         this.connections.add(connection);
@@ -44,7 +148,7 @@ class RpcServer {
             const [rpcType, id, ...args] = arg;
             this.onRawMessage(connection, rpcType, id, args);
         });
-        this.activeRequests.set(connection, new Set);
+        this.activeRequests.set(connection, new Set());
     }
     registerService(name, service) {
         this.services.set(name, service);
@@ -83,22 +187,39 @@ class RpcServer {
     onRawMessage(connection, rpcType, id, arg) {
         const type = rpcType;
         switch (type) {
-            case 100 /* RpcMessageType.Promise */:
-                {
-                    const [service, method, args] = arg;
-                    return this.onPromise(connection, id, service, method, args);
-                }
-            case 102 /* RpcMessageType.EventListen */:
-                {
-                    const [service, event, args] = arg;
-                    return this.onEventListen(connection, id, service, event, args);
-                }
-            case 103 /* RpcMessageType.EventUnlisten */:
-                {
-                    const [service, event, args] = arg;
-                    return this.onEventUnlisten(connection, id, service, event, args);
-                }
+            case 100 /* RpcMessageType.Promise */: {
+                const [service, method, args] = arg;
+                return this.onPromise(connection, id, service, method, args);
+            }
+            case 102 /* RpcMessageType.EventListen */: {
+                const [service, event, args] = arg;
+                return this.onEventListen(connection, id, service, event, args);
+            }
+            case 103 /* RpcMessageType.EventUnlisten */: {
+                const [service, event, args] = arg;
+                return this.onEventUnlisten(connection, id, service, event, args);
+            }
+            case 110 /* RpcMessageType.ObjectDeref */: {
+                const [_rpc, _deref, objectId] = arg;
+                return this.onDeref(connection, objectId);
+            }
         }
+    }
+    saveDynamicService(data, connection) {
+        const id = this.dynamicServices.add(data, connection);
+        const name = `__rpc_dyn__${id}`;
+        if (!this.services.get(name)) {
+            if ('call' in data && typeof data['call'] === 'function') {
+                this.registerService(name, data);
+            }
+            else {
+                this.registerService(name, markDynamicService(createRpcService(data)));
+            }
+        }
+        return { id, name };
+    }
+    onDeref(connection, objectId) {
+        this.dynamicServices.deref(objectId, connection);
     }
     onPromise(connection, id, service, method, args) {
         var _a;
@@ -112,7 +233,16 @@ class RpcServer {
         }
         promise.then((data) => {
             var _a;
-            this.sendResponse(connection, 201 /* RpcMessageType.PromiseSuccess */, id, data);
+            if (data && data.__rpc_dyn__) {
+                const dynamicService = this.saveDynamicService(data, connection);
+                this.sendResponse(connection, 201 /* RpcMessageType.PromiseSuccess */, id, {
+                    data: dynamicService,
+                    rpc: { dynamicId: dynamicService.id },
+                });
+            }
+            else {
+                this.sendResponse(connection, 201 /* RpcMessageType.PromiseSuccess */, id, { data });
+            }
             (_a = this.activeRequests.get(connection)) === null || _a === void 0 ? void 0 : _a.delete(id);
         }, (err) => {
             var _a;
@@ -145,6 +275,14 @@ class RpcServer {
             this.eventHandlers.set(eventKey, connectionHandlers);
             this.listen(connection.remoteContext(), service, event, handler);
         }
+        else {
+            const connectionHandlers = this.eventHandlers.get(eventKey);
+            const handler = (data) => {
+                this.sendResponse(connection, 204 /* RpcMessageType.EventFire */, eventKey, [service, event, data]);
+            };
+            connectionHandlers.set(connection, handler);
+            this.eventHandlers.set(eventKey, connectionHandlers);
+        }
         return;
     }
     onEventUnlisten(connection, id, service, event, args) {
@@ -176,11 +314,14 @@ class RpcClient {
     constructor(connection, _events) {
         this.connection = connection;
         this._events = _events;
-        this.requestId = 1;
+        this.requestId = 0;
         this.handlers = new Map();
         this.connection.on((...arg) => {
             const [rpcType, id, ...args] = arg;
             this.onRawMessage(rpcType, id, ...args);
+        });
+        this.objectRegistry = new ObjectRegistry((id) => {
+            this.connection.send(110 /* RpcMessageType.ObjectDeref */, ++this.requestId, 'rpc', 'deref', id);
         });
     }
     call(service, method, arg) {
@@ -208,26 +349,50 @@ class RpcClient {
         }
     }
     requestPromise(service, method, arg) {
-        const id = this.requestId++;
+        const id = ++this.requestId;
         const rpcType = 100 /* RpcMessageType.Promise */;
         const promise = new Promise((resolve, reject) => {
             this.connection.send(rpcType, id, service, method, arg);
-            const handler = (type, id, data) => {
+            const handler = (type, id, rawResponse) => {
                 switch (type) {
                     case 201 /* RpcMessageType.PromiseSuccess */:
-                        this.handlers.delete(id);
-                        resolve(data);
+                        {
+                            this.handlers.delete(id);
+                            const response = rawResponse;
+                            if (response.rpc) {
+                                const { name } = response.data;
+                                const { dynamicId } = response.rpc;
+                                const properties = new Map();
+                                properties.set('__rpc__', {
+                                    dynamicId: dynamicId,
+                                    name: name,
+                                });
+                                const proxyService = ProxyHelper.createProxyService(this, name, { properties });
+                                if (!this.objectRegistry.get(dynamicId)) {
+                                    this.objectRegistry.add(dynamicId, proxyService);
+                                }
+                                resolve(proxyService);
+                            }
+                            else {
+                                resolve(response.data);
+                            }
+                        }
                         break;
                     case 202 /* RpcMessageType.PromiseError */:
-                        this.handlers.delete(id);
-                        const error = new Error(data.message);
-                        error.stack = data.stack;
-                        error.name = data.name;
-                        reject(data);
+                        {
+                            this.handlers.delete(id);
+                            const response = rawResponse;
+                            const error = new Error(response.message);
+                            error.stack = response.stack;
+                            error.name = response.name;
+                            reject(response);
+                        }
                         break;
                     case 203 /* RpcMessageType.PromiseErrorObject */:
-                        this.handlers.delete(id);
-                        reject(data);
+                        {
+                            this.handlers.delete(id);
+                            reject(rawResponse);
+                        }
                         break;
                 }
             };
@@ -253,19 +418,17 @@ class RpcClient {
         switch (type) {
             case 201 /* RpcMessageType.PromiseSuccess */:
             case 202 /* RpcMessageType.PromiseError */:
-            case 203 /* RpcMessageType.PromiseErrorObject */:
-                {
-                    const [data] = arg;
-                    const handler = this.handlers.get(id);
-                    handler === null || handler === void 0 ? void 0 : handler(type, id, data);
-                    break;
-                }
-            case 204 /* RpcMessageType.EventFire */:
-                {
-                    const [service, event, data] = arg[0];
-                    this.onEventFire(service, event, data);
-                    break;
-                }
+            case 203 /* RpcMessageType.PromiseErrorObject */: {
+                const [data] = arg;
+                const handler = this.handlers.get(id);
+                handler === null || handler === void 0 ? void 0 : handler(type, id, data);
+                break;
+            }
+            case 204 /* RpcMessageType.EventFire */: {
+                const [service, event, data] = arg[0];
+                this.onEventFire(service, event, data);
+                break;
+            }
         }
     }
 }
