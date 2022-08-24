@@ -11,8 +11,18 @@ const createContext = (id: number): IpcContext => {
 
 class IpcConnection implements IIpcConnection<IpcContext> {
   private remoteCtx: IpcContext
+  private listener?: (...args: any[]) => void
+  onRpcMessage: (event: IpcMainEvent, ...args: any[]) => void
   constructor(private sender: WebContents) {
     this.remoteCtx = createContext(sender.id)
+
+    this.onRpcMessage = (event: IpcMainEvent, ...args: any[]) => {
+      if (this.listener) {
+        if (event.sender.id === this.remoteCtx.id) {
+          this.listener(...args)
+        }
+      }
+    }
   }
 
   remoteContext(): IpcContext {
@@ -24,22 +34,41 @@ class IpcConnection implements IIpcConnection<IpcContext> {
   }
 
   on(listener: (...args: any[]) => void): void {
-    ipcMain.on('rpc:message', (event: IpcMainEvent, ...args: any[]) => {
-      listener(...args)
+    this.listener = listener
+    ipcMain.on('rpc:message', this.onRpcMessage)
+  }
+
+  disconnect(): void {
+    this.sender.send('rpc:disconnect')
+  }
+
+  onDisconnect(cb: () => void): void {
+    ipcMain.on('rpc:disconnect', (event: IpcMainEvent, ...args: any[]) => {
+      console.log(`rpc:disconnect recieved`)
+      if (event.sender.id === this.remoteCtx.id) {
+        ipcMain.off('rpc:message', this.onRpcMessage)
+        cb()
+      }
+    })
+
+    this.sender.on('destroyed', () => {
+      ipcMain.off('rpc:message', this.onRpcMessage)
+      cb()
     })
   }
 }
 
 export class Server extends RpcServer<IpcContext> {
-  constructor() {
-    super({ id: 'main' })
-    ipcMain.on('rpc:hello', (event: IpcMainEvent, ...args: any[]) => {
-      this.onClientHello(event.sender)
+  constructor(id = 'rpc.electron.main') {
+    super({ id })
+    ipcMain.on('rpc:hello', (event: IpcMainEvent) => {
+      const connection = new IpcConnection(event.sender)
+      super.addConnection(connection)
       event.sender.send('rpc:hello')
-    })
-  }
 
-  private onClientHello(sender: WebContents) {
-    super.addConnection(new IpcConnection(sender))
+      connection.onDisconnect(() => {
+        super.onDisconnect(connection)
+      })
+    })
   }
 }

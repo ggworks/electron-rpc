@@ -7,5 +7,7 @@ export interface IpcRenderer {
     on: (channel: string, listener: (ctx: any, ...args: any[]) => void) => void;
 }
 export declare class Client extends RpcClient<IpcContext> {
+    private ipcRenderer;
     constructor(ipcRenderer: IpcRenderer, events: IEventEmiiter);
+    disconnect(): void;
 }

@@ -33,6 +33,7 @@ export interface IIpcConnection<TContext> {
   remoteContext: () => TContext
   send(...args: any[]): void
   on(listener: (...args: any[]) => void): void
+  disconnect(): void
 }
 
 export const enum RpcMessageType {
@@ -93,34 +94,67 @@ export function createRpcService<TContext>(service: unknown): IRpcService<TConte
 
 class DynamicServices {
   private nextId = 0
-  private services: Record<number, { object: any; connections: Set<any> }> = {}
+  private storage: Record<number, { object: any; connections: Set<any> }> = {}
   private ids = new WeakMap<object, number>()
+  private connectionIds = new Map<any, Set<number>>()
+
+  private services = new Map<string, any>()
 
   public add(data: object, connection: any) {
-    const id = this.save(data)
-    this.services[id].connections.add(connection)
-    return id
+    const { id, name } = this.save(data)
+    this.storage[id].connections.add(connection)
+    let idsOnConnection = this.connectionIds.get(connection)
+    if (!idsOnConnection) {
+      idsOnConnection = new Set()
+      this.connectionIds.set(connection, idsOnConnection)
+    }
+    idsOnConnection.add(id)
+    return { id, name }
+  }
+
+  public registerService(name: string, service: any) {
+    this.services.set(name, service)
+  }
+
+  public get(name: string) {
+    return this.services.get(name)
   }
 
   public deref(id: number, connection: any) {
-    const pointer = this.services[id]
+    const pointer = this.storage[id]
     if (pointer) {
       pointer.connections.delete(connection)
       if (pointer.connections.size === 0) {
         this.ids.delete(pointer.object)
-        delete this.services[id]
+        delete this.storage[id]
+        const name = `__rpc_dyn__${id}`
+        this.services.delete(name)
+
+        console.log(`DynamicServices delete ${id}`)
       }
+    }
+  }
+
+  public removeConnection(connection: any) {
+    const ids = this.connectionIds.get(connection)
+    if (ids) {
+      ids.forEach((id) => {
+        this.deref(id, connection)
+      })
+      this.connectionIds.delete(connection)
     }
   }
 
   private save(data: object) {
     let id = this.ids.get(data)
+
     if (!id) {
       id = ++this.nextId
-      this.services[id] = { object: data, connections: new Set() }
+      this.storage[id] = { object: data, connections: new Set() }
     }
 
-    return id
+    const name = `__rpc_dyn__${id}`
+    return { id, name }
   }
 }
 
@@ -138,6 +172,7 @@ class ObjectRegistry<T> {
       const ref = this.objectCache.get(id)
       if (ref !== undefined && ref.deref() === undefined) {
         this.objectCache.delete(id)
+        console.log(`ObjectRegistry ${id}`)
         cb(id)
       }
     })
@@ -147,6 +182,7 @@ class ObjectRegistry<T> {
     const wr = new WeakRef(object)
     this.objectCache.set(id, wr)
     this.finalizationRegistry.register(object, id)
+    console.log(`finalizationRegistry add ${id}`)
   }
 
   get(id: T) {
@@ -235,6 +271,7 @@ export class RpcServer<TContext> implements IRpcServer<TContext> {
   private activeRequests = new Map<IIpcConnection<TContext>, Set<number>>()
   private eventHandlers = new Map<string, Map<IIpcConnection<TContext>, EventCB<any>>>()
   private eventRoutes = new Map<string, IIpcConnection<TContext>[]>()
+  private connectionEvents = new Map<IIpcConnection<TContext>, Set<string>>()
 
   private dynamicServices = new DynamicServices()
 
@@ -246,15 +283,35 @@ export class RpcServer<TContext> implements IRpcServer<TContext> {
       const [rpcType, id, ...args] = arg
       this.onRawMessage(connection, rpcType, id, args)
     })
-    this.activeRequests.set(connection, new Set<number>())
+    this.activeRequests.set(connection, new Set())
+    this.connectionEvents.set(connection, new Set())
+  }
+
+  protected onDisconnect(connection: IIpcConnection<TContext>) {
+    console.log(`onDisconnect`)
+    this.connections.delete(connection)
+    this.activeRequests.delete(connection)
+    this.dynamicServices.removeConnection(connection)
+    const eventKeys = this.connectionEvents.get(connection)
+    if (eventKeys) {
+      eventKeys.forEach((eventKey) => {
+        const [service, event] = eventKey.split('.')
+        this.onEventUnlisten(connection, service, event)
+      })
+    }
+    this.connectionEvents.delete(connection)
   }
 
   public registerService(name: string, service: IRpcService<TContext>) {
     this.services.set(name, service)
   }
 
+  private getService(service: string) {
+    return service.startsWith('__rpc_') ? this.dynamicServices.get(service) : this.services.get(service)
+  }
+
   public call(ctx: TContext, service: string, method: string, args?: any[]): Promise<any> {
-    const handler = this.services.get(service)
+    const handler = this.getService(service)
     if (handler) {
       let res = handler.call(ctx, method, args)
       if (!isPromise(res)) {
@@ -267,7 +324,7 @@ export class RpcServer<TContext> implements IRpcServer<TContext> {
   }
 
   public listen(ctx: TContext, service: string, event: string, cb: EventCB<any>): void {
-    const handler = this.services.get(service)
+    const handler = this.getService(service)
     if (handler) {
       handler.listen(ctx, event, cb)
     } else {
@@ -276,7 +333,7 @@ export class RpcServer<TContext> implements IRpcServer<TContext> {
   }
 
   public unlisten(ctx: TContext, service: string, event: string, cb: EventCB<any>): void {
-    const handler = this.services.get(service)
+    const handler = this.getService(service)
     if (handler) {
       handler.unlisten(ctx, event, cb)
     } else {
@@ -297,7 +354,7 @@ export class RpcServer<TContext> implements IRpcServer<TContext> {
       }
       case RpcMessageType.EventUnlisten: {
         const [service, event, args] = arg
-        return this.onEventUnlisten(connection, id, service, event, args)
+        return this.onEventUnlisten(connection, service, event, args)
       }
 
       case RpcMessageType.ObjectDeref: {
@@ -308,13 +365,12 @@ export class RpcServer<TContext> implements IRpcServer<TContext> {
   }
 
   private saveDynamicService(data: any, connection: IIpcConnection<TContext>) {
-    const id = this.dynamicServices.add(data, connection)
-    const name = `__rpc_dyn__${id}`
-    if (!this.services.get(name)) {
+    const { id, name } = this.dynamicServices.add(data, connection)
+    if (!this.dynamicServices.get(name)) {
       if ('call' in data && typeof data['call'] === 'function') {
-        this.registerService(name, data)
+        this.dynamicServices.registerService(name, data)
       } else {
-        this.registerService(name, markDynamicService(createRpcService(data)))
+        this.dynamicServices.registerService(name, markDynamicService(createRpcService(data)))
       }
     }
 
@@ -342,28 +398,32 @@ export class RpcServer<TContext> implements IRpcServer<TContext> {
 
     promise.then(
       (data) => {
-        if (data && data.__rpc_dyn__) {
-          const dynamicService = this.saveDynamicService(data, connection)
-          this.sendResponse(connection, RpcMessageType.PromiseSuccess, id, {
-            data: dynamicService,
-            rpc: { dynamicId: dynamicService.id },
-          })
-        } else {
-          this.sendResponse(connection, RpcMessageType.PromiseSuccess, id, { data })
+        if (this.activeRequests.has(connection)) {
+          if (data && data.__rpc_dyn__) {
+            const dynamicService = this.saveDynamicService(data, connection)
+            this.sendResponse(connection, RpcMessageType.PromiseSuccess, id, {
+              data: dynamicService,
+              rpc: { dynamicId: dynamicService.id },
+            })
+          } else {
+            this.sendResponse(connection, RpcMessageType.PromiseSuccess, id, { data })
+          }
+          this.activeRequests.get(connection)?.delete(id)
         }
-        this.activeRequests.get(connection)?.delete(id)
       },
       (err) => {
         if (err instanceof Error) {
-          this.sendResponse(connection, RpcMessageType.PromiseError, id, {
-            message: err.message,
-            name: err.name,
-            stack: err.stack ? (err.stack.split ? err.stack.split('\n') : err.stack) : undefined,
-          })
-        } else {
-          this.sendResponse(connection, RpcMessageType.PromiseErrorObject, id, err)
+          if (this.activeRequests.has(connection)) {
+            this.sendResponse(connection, RpcMessageType.PromiseError, id, {
+              message: err.message,
+              name: err.name,
+              stack: err.stack ? (err.stack.split ? err.stack.split('\n') : err.stack) : undefined,
+            })
+          } else {
+            this.sendResponse(connection, RpcMessageType.PromiseErrorObject, id, err)
+          }
+          this.activeRequests.get(connection)?.delete(id)
         }
-        this.activeRequests.get(connection)?.delete(id)
       }
     )
   }
@@ -376,6 +436,7 @@ export class RpcServer<TContext> implements IRpcServer<TContext> {
     args?: any[]
   ): void {
     const eventKey = `${service}.${event}`
+    this.connectionEvents.get(connection)?.add(eventKey)
     const connections = this.eventRoutes.get(eventKey) || []
     if (!connections.includes(connection)) {
       connections.push(connection)
@@ -386,7 +447,9 @@ export class RpcServer<TContext> implements IRpcServer<TContext> {
       const connectionHandlers = new Map<IIpcConnection<TContext>, EventCB<any>>()
 
       const handler = (data: any) => {
-        this.sendResponse(connection, RpcMessageType.EventFire, eventKey, [service, event, data])
+        if (this.connections.has(connection)) {
+          this.sendResponse(connection, RpcMessageType.EventFire, eventKey, [service, event, data])
+        }
       }
       connectionHandlers.set(connection, handler)
       this.eventHandlers.set(eventKey, connectionHandlers)
@@ -402,13 +465,7 @@ export class RpcServer<TContext> implements IRpcServer<TContext> {
     return
   }
 
-  private onEventUnlisten(
-    connection: IIpcConnection<TContext>,
-    id: number,
-    service: string,
-    event: string,
-    args?: any[]
-  ): void {
+  private onEventUnlisten(connection: IIpcConnection<TContext>, service: string, event: string, args?: any[]): void {
     const eventKey = `${service}.${event}`
     const connectionHandlers = this.eventHandlers.get(eventKey)
     if (connectionHandlers) {
@@ -440,7 +497,7 @@ export class RpcClient<TContext> implements IRpcClient {
   private handlers = new Map<number, (...args: any[]) => void>()
   private objectRegistry: ObjectRegistry<number>
 
-  constructor(private connection: IIpcConnection<TContext>, private _events: IEventEmiiter) {
+  constructor(protected connection: IIpcConnection<TContext>, private _events: IEventEmiiter) {
     this.connection.on((...arg: any[]) => {
       const [rpcType, id, ...args] = arg
       this.onRawMessage(rpcType, id, ...args)

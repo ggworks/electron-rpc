@@ -21,14 +21,21 @@ class IpcConnection {
             listener(...args);
         });
     }
+    disconnect() {
+        this.ipcRenderer.send('rpc:disconnect');
+    }
 }
 class Client extends rpc_1.RpcClient {
     constructor(ipcRenderer, events) {
-        super(new IpcConnection(ipcRenderer, 'rpc:main'), events);
+        super(new IpcConnection(ipcRenderer, 'rpc.electron.main'), events);
+        this.ipcRenderer = ipcRenderer;
         ipcRenderer.send('rpc:hello');
         ipcRenderer.on('rpc:hello', () => {
             console.log(`Client get rpc:hello`);
         });
+    }
+    disconnect() {
+        this.connection.disconnect();
     }
 }
 exports.Client = Client;

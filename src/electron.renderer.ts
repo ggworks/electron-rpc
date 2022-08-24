@@ -32,14 +32,22 @@ class IpcConnection implements IIpcConnection<IpcContext> {
       listener(...args)
     })
   }
+
+  disconnect(): void {
+    this.ipcRenderer.send('rpc:disconnect')
+  }
 }
 
 export class Client extends RpcClient<IpcContext> {
-  constructor(ipcRenderer: IpcRenderer, events: IEventEmiiter) {
-    super(new IpcConnection(ipcRenderer, 'rpc:main'), events)
+  constructor(private ipcRenderer: IpcRenderer, events: IEventEmiiter) {
+    super(new IpcConnection(ipcRenderer, 'rpc.electron.main'), events)
     ipcRenderer.send('rpc:hello')
     ipcRenderer.on('rpc:hello', () => {
       console.log(`Client get rpc:hello`)
     })
+  }
+
+  public disconnect() {
+    this.connection.disconnect()
   }
 }

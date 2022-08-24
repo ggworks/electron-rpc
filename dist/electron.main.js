@@ -10,6 +10,13 @@ class IpcConnection {
     constructor(sender) {
         this.sender = sender;
         this.remoteCtx = createContext(sender.id);
+        this.onRpcMessage = (event, ...args) => {
+            if (this.listener) {
+                if (event.sender.id === this.remoteCtx.id) {
+                    this.listener(...args);
+                }
+            }
+        };
     }
     remoteContext() {
         return this.remoteCtx;
@@ -18,21 +25,37 @@ class IpcConnection {
         this.sender.send('rpc:message', ...args);
     }
     on(listener) {
-        electron_1.ipcMain.on('rpc:message', (event, ...args) => {
-            listener(...args);
+        this.listener = listener;
+        electron_1.ipcMain.on('rpc:message', this.onRpcMessage);
+    }
+    disconnect() {
+        this.sender.send('rpc:disconnect');
+    }
+    onDisconnect(cb) {
+        electron_1.ipcMain.on('rpc:disconnect', (event, ...args) => {
+            console.log(`rpc:disconnect recieved`);
+            if (event.sender.id === this.remoteCtx.id) {
+                electron_1.ipcMain.off('rpc:message', this.onRpcMessage);
+                cb();
+            }
+        });
+        this.sender.on('destroyed', () => {
+            electron_1.ipcMain.off('rpc:message', this.onRpcMessage);
+            cb();
         });
     }
 }
 class Server extends rpc_1.RpcServer {
-    constructor() {
-        super({ id: 'main' });
-        electron_1.ipcMain.on('rpc:hello', (event, ...args) => {
-            this.onClientHello(event.sender);
+    constructor(id = 'rpc.electron.main') {
+        super({ id });
+        electron_1.ipcMain.on('rpc:hello', (event) => {
+            const connection = new IpcConnection(event.sender);
+            super.addConnection(connection);
             event.sender.send('rpc:hello');
+            connection.onDisconnect(() => {
+                super.onDisconnect(connection);
+            });
         });
-    }
-    onClientHello(sender) {
-        super.addConnection(new IpcConnection(sender));
     }
 }
 exports.Server = Server;

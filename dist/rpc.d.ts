@@ -27,6 +27,7 @@ export interface IIpcConnection<TContext> {
     remoteContext: () => TContext;
     send(...args: any[]): void;
     on(listener: (...args: any[]) => void): void;
+    disconnect(): void;
 }
 export declare const enum RpcMessageType {
     Promise = 100,
@@ -64,10 +65,13 @@ export declare class RpcServer<TContext> implements IRpcServer<TContext> {
     private activeRequests;
     private eventHandlers;
     private eventRoutes;
+    private connectionEvents;
     private dynamicServices;
     constructor(ctx: TContext);
     protected addConnection(connection: IIpcConnection<TContext>): void;
+    protected onDisconnect(connection: IIpcConnection<TContext>): void;
     registerService(name: string, service: IRpcService<TContext>): void;
+    private getService;
     call(ctx: TContext, service: string, method: string, args?: any[]): Promise<any>;
     listen(ctx: TContext, service: string, event: string, cb: EventCB<any>): void;
     unlisten(ctx: TContext, service: string, event: string, cb: EventCB<any>): void;
@@ -80,7 +84,7 @@ export declare class RpcServer<TContext> implements IRpcServer<TContext> {
     private sendResponse;
 }
 export declare class RpcClient<TContext> implements IRpcClient {
-    private connection;
+    protected connection: IIpcConnection<TContext>;
     private _events;
     private requestId;
     private handlers;

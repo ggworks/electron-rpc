@@ -3,6 +3,5 @@ export interface IpcContext {
     id: string | number;
 }
 export declare class Server extends RpcServer<IpcContext> {
-    constructor();
-    private onClientHello;
+    constructor(id?: string);
 }
