@@ -151,6 +151,7 @@ class DynamicServices {
     if (!id) {
       id = ++this.nextId
       this.storage[id] = { object: data, connections: new Set() }
+      this.ids.set(data, id)
     }
 
     const name = `__rpc_dyn__${id}`
