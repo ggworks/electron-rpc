@@ -7,8 +7,9 @@ Inspired by vscode's RPC module, try to make a convenient, easy to use but yet p
 features:
 
 - pure TypeScript code
-- compile-time type check with TypeScript interface
-- auto Promisify TypeScript interface, with events on/off method overloading support
+- **use remote service just like a local object, no boilerplate or glue code needed**
+- **strong type, compile-time type check with TypeScript interface**
+- **auto Promisify TypeScript interface, with events on/off method overloading support**
 - event listen/unlisten
 - dynamic service object creation, and lifetime management by GC (FinalizationRegistry)
 - support electron sanbox, no nodeintegration required
