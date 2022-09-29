@@ -297,7 +297,9 @@ export class RpcServer<TContext> implements IRpcServer<TContext> {
     if (eventKeys) {
       eventKeys.forEach((eventKey) => {
         const [service, event] = eventKey.split('.')
-        this.onEventUnlisten(connection, service, event)
+        try {
+          this.onEventUnlisten(connection, service, event)        
+        } catch (error) {}
       })
     }
     this.connectionEvents.delete(connection)
