@@ -293,7 +293,9 @@ class RpcServer {
                     });
                 }
                 else {
-                    this.sendResponse(connection, 201 /* RpcMessageType.PromiseSuccess */, id, { data });
+                    this.sendResponse(connection, 201 /* RpcMessageType.PromiseSuccess */, id, {
+                        data,
+                    });
                 }
                 (_a = this.activeRequests.get(connection)) === null || _a === void 0 ? void 0 : _a.delete(id);
             }
@@ -325,7 +327,7 @@ class RpcServer {
         }
         if (!this.eventHandlers.has(eventKey)) {
             const connectionHandlers = new Map();
-            const handler = (data) => {
+            const handler = (...data) => {
                 if (this.connections.has(connection)) {
                     this.sendResponse(connection, 204 /* RpcMessageType.EventFire */, eventKey, [service, event, data]);
                 }
@@ -336,11 +338,14 @@ class RpcServer {
         }
         else {
             const connectionHandlers = this.eventHandlers.get(eventKey);
-            const handler = (data) => {
-                this.sendResponse(connection, 204 /* RpcMessageType.EventFire */, eventKey, [service, event, data]);
+            const handler = (...data) => {
+                if (this.connections.has(connection)) {
+                    this.sendResponse(connection, 204 /* RpcMessageType.EventFire */, eventKey, [service, event, data]);
+                }
             };
             connectionHandlers.set(connection, handler);
             this.eventHandlers.set(eventKey, connectionHandlers);
+            this.listen(connection.remoteContext(), service, event, handler);
         }
         return;
     }
@@ -428,7 +433,9 @@ class RpcClient {
                                 });
                                 let proxyService = this.objectRegistry.get(dynamicId);
                                 if (!proxyService) {
-                                    proxyService = ProxyHelper.createProxyService(this, name, { properties });
+                                    proxyService = ProxyHelper.createProxyService(this, name, {
+                                        properties,
+                                    });
                                     this.objectRegistry.add(dynamicId, proxyService);
                                 }
                                 resolve(proxyService);
@@ -471,7 +478,7 @@ class RpcClient {
         this.connection.send(rpcType, id, service, event, arg);
     }
     onEventFire(service, event, data) {
-        this._events.emit(`${service}.${event}`, data);
+        this._events.emit(`${service}.${event}`, ...data);
     }
     onRawMessage(rpcType, id, ...arg) {
         const type = rpcType;

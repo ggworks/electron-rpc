@@ -1,26 +1,26 @@
 /// <reference lib="es2021.weakref" />
-export declare type EventCB<T> = (data?: T) => void;
+export declare type EventCB = (...data: any) => void;
 export interface IEventEmiiter {
-    on<T>(event: string, cb: EventCB<T>): any;
-    once<T>(event: string, cb: EventCB<T>): any;
-    off<T>(event: string, cb: EventCB<T>): any;
-    emit<T>(event: string, data: T): any;
+    on(event: string, cb: EventCB): any;
+    once(event: string, cb: EventCB): any;
+    off(event: string, cb: EventCB): any;
+    emit(event: string, ...data: any): any;
     listenerCount(event: string): number;
 }
 export interface IRpcClient {
     call<T>(service: string, method: string, args?: any): Promise<T>;
-    listen<T>(service: string, event: string, cb: EventCB<T>, once?: boolean): void;
-    unlisten<T>(service: string, event: string, cb: EventCB<T>): void;
+    listen(service: string, event: string, cb: EventCB, once?: boolean): void;
+    unlisten(service: string, event: string, cb: EventCB): void;
 }
 export interface IRpcService<TContext> {
     call<T>(ctx: TContext, method: string, args?: any): Promise<T>;
-    listen<T>(ctx: TContext, event: string, cb: EventCB<T>): void;
-    unlisten<T>(ctx: TContext, event: string, cb: EventCB<T>): void;
+    listen(ctx: TContext, event: string, cb: EventCB): void;
+    unlisten(ctx: TContext, event: string, cb: EventCB): void;
 }
 export interface IRpcServer<TContext> {
     call<T>(ctx: TContext, service: string, method: string, args?: any): Promise<T>;
-    listen<T>(ctx: TContext, service: string, event: string, cb: EventCB<T>): void;
-    unlisten<T>(ctx: TContext, service: string, event: string, cb: EventCB<T>): void;
+    listen(ctx: TContext, service: string, event: string, cb: EventCB): void;
+    unlisten(ctx: TContext, service: string, event: string, cb: EventCB): void;
     registerService(name: string, service: IRpcService<TContext>): void;
 }
 export interface IIpcConnection<TContext> {
@@ -73,8 +73,8 @@ export declare class RpcServer<TContext> implements IRpcServer<TContext> {
     registerService(name: string, service: IRpcService<TContext>): void;
     private getService;
     call(ctx: TContext, service: string, method: string, args?: any[]): Promise<any>;
-    listen(ctx: TContext, service: string, event: string, cb: EventCB<any>): void;
-    unlisten(ctx: TContext, service: string, event: string, cb: EventCB<any>): void;
+    listen(ctx: TContext, service: string, event: string, cb: EventCB): void;
+    unlisten(ctx: TContext, service: string, event: string, cb: EventCB): void;
     private onRawMessage;
     private saveDynamicService;
     private onDeref;
@@ -91,8 +91,8 @@ export declare class RpcClient<TContext> implements IRpcClient {
     private objectRegistry;
     constructor(connection: IIpcConnection<TContext>, _events: IEventEmiiter);
     call(service: string, method: string, arg?: any[]): Promise<any>;
-    listen<T>(service: string, event: string, cb: EventCB<T>, once?: boolean): void;
-    unlisten<T>(service: string, event: string, cb: EventCB<T>): void;
+    listen<T>(service: string, event: string, cb: EventCB, once?: boolean): void;
+    unlisten<T>(service: string, event: string, cb: EventCB): void;
     private requestPromise;
     private requestEventListen;
     private requestEventUnlisten;

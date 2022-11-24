@@ -1,31 +1,31 @@
 /* eslint-disable @typescript-eslint/no-namespace */
 ///<reference lib="es2021.weakref" />
-export type EventCB<T> = (data?: T) => void
+export type EventCB = (...data: any) => void
 
 export interface IEventEmiiter {
-  on<T>(event: string, cb: EventCB<T>): any
-  once<T>(event: string, cb: EventCB<T>): any
-  off<T>(event: string, cb: EventCB<T>): any
-  emit<T>(event: string, data: T): any
+  on(event: string, cb: EventCB): any
+  once(event: string, cb: EventCB): any
+  off(event: string, cb: EventCB): any
+  emit(event: string, ...data: any): any
   listenerCount(event: string): number
 }
 
 export interface IRpcClient {
   call<T>(service: string, method: string, args?: any): Promise<T>
-  listen<T>(service: string, event: string, cb: EventCB<T>, once?: boolean): void
-  unlisten<T>(service: string, event: string, cb: EventCB<T>): void
+  listen(service: string, event: string, cb: EventCB, once?: boolean): void
+  unlisten(service: string, event: string, cb: EventCB): void
 }
 
 export interface IRpcService<TContext> {
   call<T>(ctx: TContext, method: string, args?: any): Promise<T>
-  listen<T>(ctx: TContext, event: string, cb: EventCB<T>): void
-  unlisten<T>(ctx: TContext, event: string, cb: EventCB<T>): void
+  listen(ctx: TContext, event: string, cb: EventCB): void
+  unlisten(ctx: TContext, event: string, cb: EventCB): void
 }
 
 export interface IRpcServer<TContext> {
   call<T>(ctx: TContext, service: string, method: string, args?: any): Promise<T>
-  listen<T>(ctx: TContext, service: string, event: string, cb: EventCB<T>): void
-  unlisten<T>(ctx: TContext, service: string, event: string, cb: EventCB<T>): void
+  listen(ctx: TContext, service: string, event: string, cb: EventCB): void
+  unlisten(ctx: TContext, service: string, event: string, cb: EventCB): void
   registerService(name: string, service: IRpcService<TContext>): void
 }
 
@@ -79,11 +79,11 @@ class RpcService<TContext> implements IRpcService<TContext> {
     }
   }
 
-  listen(_: TContext, event: string, cb: EventCB<any>): void {
+  listen(_: TContext, event: string, cb: EventCB): void {
     this.call(_, 'on', [event, cb])
   }
 
-  unlisten(_: TContext, event: string, cb: EventCB<any>): void {
+  unlisten(_: TContext, event: string, cb: EventCB): void {
     this.call(_, 'off', [event, cb])
   }
 }
@@ -270,7 +270,7 @@ export class RpcServer<TContext> implements IRpcServer<TContext> {
   private connections = new Set<IIpcConnection<TContext>>()
 
   private activeRequests = new Map<IIpcConnection<TContext>, Set<number>>()
-  private eventHandlers = new Map<string, Map<IIpcConnection<TContext>, EventCB<any>>>()
+  private eventHandlers = new Map<string, Map<IIpcConnection<TContext>, EventCB>>()
   private eventRoutes = new Map<string, IIpcConnection<TContext>[]>()
   private connectionEvents = new Map<IIpcConnection<TContext>, Set<string>>()
 
@@ -298,7 +298,7 @@ export class RpcServer<TContext> implements IRpcServer<TContext> {
       eventKeys.forEach((eventKey) => {
         const [service, event] = eventKey.split('.')
         try {
-          this.onEventUnlisten(connection, service, event)        
+          this.onEventUnlisten(connection, service, event)
         } catch (error) {}
       })
     }
@@ -326,7 +326,7 @@ export class RpcServer<TContext> implements IRpcServer<TContext> {
     }
   }
 
-  public listen(ctx: TContext, service: string, event: string, cb: EventCB<any>): void {
+  public listen(ctx: TContext, service: string, event: string, cb: EventCB): void {
     const handler = this.getService(service)
     if (handler) {
       handler.listen(ctx, event, cb)
@@ -335,7 +335,7 @@ export class RpcServer<TContext> implements IRpcServer<TContext> {
     }
   }
 
-  public unlisten(ctx: TContext, service: string, event: string, cb: EventCB<any>): void {
+  public unlisten(ctx: TContext, service: string, event: string, cb: EventCB): void {
     const handler = this.getService(service)
     if (handler) {
       handler.unlisten(ctx, event, cb)
@@ -409,7 +409,9 @@ export class RpcServer<TContext> implements IRpcServer<TContext> {
               rpc: { dynamicId: dynamicService.id },
             })
           } else {
-            this.sendResponse(connection, RpcMessageType.PromiseSuccess, id, { data })
+            this.sendResponse(connection, RpcMessageType.PromiseSuccess, id, {
+              data,
+            })
           }
           this.activeRequests.get(connection)?.delete(id)
         }
@@ -447,9 +449,9 @@ export class RpcServer<TContext> implements IRpcServer<TContext> {
     }
 
     if (!this.eventHandlers.has(eventKey)) {
-      const connectionHandlers = new Map<IIpcConnection<TContext>, EventCB<any>>()
+      const connectionHandlers = new Map<IIpcConnection<TContext>, EventCB>()
 
-      const handler = (data: any) => {
+      const handler = (...data: any[]) => {
         if (this.connections.has(connection)) {
           this.sendResponse(connection, RpcMessageType.EventFire, eventKey, [service, event, data])
         }
@@ -459,11 +461,14 @@ export class RpcServer<TContext> implements IRpcServer<TContext> {
       this.listen(connection.remoteContext(), service, event, handler)
     } else {
       const connectionHandlers = this.eventHandlers.get(eventKey)
-      const handler = (data: any) => {
-        this.sendResponse(connection, RpcMessageType.EventFire, eventKey, [service, event, data])
+      const handler = (...data: any[]) => {
+        if (this.connections.has(connection)) {
+          this.sendResponse(connection, RpcMessageType.EventFire, eventKey, [service, event, data])
+        }
       }
       connectionHandlers!.set(connection, handler)
       this.eventHandlers.set(eventKey, connectionHandlers!)
+      this.listen(connection.remoteContext(), service, event, handler)
     }
     return
   }
@@ -515,7 +520,7 @@ export class RpcClient<TContext> implements IRpcClient {
     return this.requestPromise(service, method, arg)
   }
 
-  public listen<T>(service: string, event: string, cb: EventCB<T>, once?: boolean): void {
+  public listen<T>(service: string, event: string, cb: EventCB, once?: boolean): void {
     const eventKey = `${service}.${event}`
     if (once) {
       this._events.once(eventKey, cb)
@@ -528,7 +533,7 @@ export class RpcClient<TContext> implements IRpcClient {
     }
   }
 
-  public unlisten<T>(service: string, event: string, cb: EventCB<T>): void {
+  public unlisten<T>(service: string, event: string, cb: EventCB): void {
     const eventKey = `${service}.${event}`
     this._events.off(eventKey, cb)
     const isLastOne = this._events.listenerCount(eventKey) === 0
@@ -564,7 +569,9 @@ export class RpcClient<TContext> implements IRpcClient {
                 })
                 let proxyService = this.objectRegistry.get(dynamicId)
                 if (!proxyService) {
-                  proxyService = ProxyHelper.createProxyService(this, name, { properties })
+                  proxyService = ProxyHelper.createProxyService(this, name, {
+                    properties,
+                  })
                   this.objectRegistry.add(dynamicId, proxyService)
                 }
                 resolve(proxyService)
@@ -612,8 +619,8 @@ export class RpcClient<TContext> implements IRpcClient {
     this.connection.send(rpcType, id, service, event, arg)
   }
 
-  private onEventFire(service: string, event: string, data: any) {
-    this._events.emit(`${service}.${event}`, data)
+  private onEventFire(service: string, event: string, data: any[]) {
+    this._events.emit(`${service}.${event}`, ...data)
   }
 
   private onRawMessage(rpcType: number, id: number | string, ...arg: any[]): void {
