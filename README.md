@@ -16,6 +16,12 @@ features:
 
 ## Quick Start
 
+install 
+```
+npm i @ggworks/electron-rpc
+```
+
+
 let's say if you have these services
 
 ```ts
@@ -80,7 +86,7 @@ class WindowService implements IRpcService<IpcContext> {
 in main process, register your service
 
 ```js
-import { createRpcService, Server } from "electron-rpc/main";
+import { createRpcService, Server } from "@ggworks/electron-rpc/main";
 
 const rpc = new Server();
 rpc.registerService("window", new WindowService());
@@ -92,7 +98,7 @@ in renderer process, simple setup the client
 
 ```typescript
 //setup client with few lines of code
-import { Client, ProxyHelper } from "electron-rpc/renderer";
+import { Client, ProxyHelper } from "@ggworks/electron-rpc/renderer";
 import EventEmitter from "eventemitter3";
 const _client = new Client(window.ipcRenderer, new EventEmitter());
 const rpc = {

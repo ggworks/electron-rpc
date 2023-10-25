@@ -1,6 +1,6 @@
 {
-  "name": "electron-rpc",
-  "version": "0.0.0-development",
+  "name": "@ggworks/electron-rpc",
+  "version": "1.0.0",
   "description": "rpc for electron",
   "main": "index.js",
   "scripts": {
